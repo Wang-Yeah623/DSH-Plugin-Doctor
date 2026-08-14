@@ -1,0 +1,5 @@
+export { doctorPlugin } from './doctor.js'
+export { installPlugin, rollbackProfile } from './installer.js'
+export { markdownReport, badgeSvg } from './report.js'
+export { scanSource, permissionManifest } from './scanner.js'
+export { validateManifest } from './manifest.js'

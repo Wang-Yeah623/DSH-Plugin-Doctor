@@ -1,0 +1,40 @@
+{
+  "name": "dsh-plugin-doctor",
+  "version": "0.1.0",
+  "description": "Compatibility, security, isolated-install and rollback doctor for DeepSeek Harness plugins",
+  "type": "module",
+  "bin": {
+    "dsh-plugin-doctor": "./src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/cli.js && node --test test/*.test.js",
+    "smoke": "node src/cli.js check test/fixtures/safe-plugin --no-isolate --report-dir .doctor-smoke"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "security"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^14.0.1",
+    "semver": "^7.7.2",
+    "tar": "^7.4.3",
+    "yaml": "^2.8.1"
+  }
+}

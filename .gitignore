@@ -1,0 +1,7 @@
+node_modules/
+reports/
+.doctor-smoke/
+coverage/
+*.log
+.DS_Store
+

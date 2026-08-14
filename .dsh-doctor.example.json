@@ -1,0 +1,20 @@
+{
+  "policy": {
+    "blockSeverities": ["critical"],
+    "allowedPermissions": [],
+    "packagePermissions": {
+      "@your-team/*": ["hooks", "network"]
+    }
+  },
+  "allowlist": [
+    {
+      "package": "@your-team/*",
+      "owner": "platform-team"
+    },
+    "github:trusted-org/*"
+  ],
+  "registries": {
+    "@your-team": "https://npm.example.com",
+    "default": "https://registry.npmjs.org"
+  }
+}

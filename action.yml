@@ -1,0 +1,39 @@
+name: DSH Plugin Doctor
+description: Audit and isolate-test a DeepSeek Harness plugin on Linux, macOS or Windows
+inputs:
+  plugin:
+    description: npm spec or path to the plugin
+    required: false
+    default: .
+  dsh-version:
+    description: DeepSeek Harness version to test
+    required: false
+    default: latest
+  report-dir:
+    description: Directory for JSON, Markdown and badge outputs
+    required: false
+    default: reports
+  strict:
+    description: Block high severity findings as well as critical findings
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Enable pnpm for DSH Profile management
+      shell: bash
+      run: npm install --global pnpm@11.7.0 --ignore-scripts --no-audit --no-fund
+    - name: Install Doctor runtime dependencies
+      shell: bash
+      run: npm install --prefix "$GITHUB_ACTION_PATH" --ignore-scripts --no-audit --no-fund
+    - name: Audit DSH plugin
+      shell: bash
+      env:
+        INPUT_PLUGIN: ${{ inputs.plugin }}
+        INPUT_DSH_VERSION: ${{ inputs.dsh-version }}
+        INPUT_REPORT_DIR: ${{ inputs.report-dir }}
+        INPUT_STRICT: ${{ inputs.strict }}
+      run: |
+        args=(check "$INPUT_PLUGIN" --dsh-version "$INPUT_DSH_VERSION" --report-dir "$INPUT_REPORT_DIR")
+        if [[ "$INPUT_STRICT" == "true" ]]; then args+=(--strict); fi
+        node "$GITHUB_ACTION_PATH/src/cli.js" "${args[@]}"

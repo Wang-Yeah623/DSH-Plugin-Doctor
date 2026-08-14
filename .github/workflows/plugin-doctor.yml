@@ -1,0 +1,41 @@
+name: DSH Plugin Compatibility
+
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    name: ${{ matrix.os }} / DSH ${{ matrix.dsh }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        dsh: [0.1.0-rc.2, 0.1.0-rc.3, 0.1.0-rc.6]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Test Doctor package
+        run: npm test
+      - name: Test fixture plugin against DSH
+        uses: ./
+        with:
+          plugin: test/fixtures/safe-plugin
+          dsh-version: ${{ matrix.dsh }}
+          report-dir: reports/${{ matrix.os }}-${{ matrix.dsh }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: doctor-${{ matrix.os }}-${{ matrix.dsh }}
+          path: reports/
