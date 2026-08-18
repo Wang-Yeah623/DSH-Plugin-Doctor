@@ -3,11 +3,11 @@ import http from 'node:http'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { DEFAULT_TIMEOUT_MS } from './constants.js'
 import { checkInstalledPeers, probeDsh } from './compatibility.js'
 import { diffLines } from './diff.js'
-import { redact, run } from './utils.js'
+import { redact, resolveCommand, run } from './utils.js'
 
 function safeProcessResult(value) {
   if (!value) return value
@@ -45,13 +45,24 @@ function httpReady(port) {
   })
 }
 
+function stopProcessTree(child, force = false) {
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    return
+  }
+  child.kill(force ? 'SIGKILL' : 'SIGTERM')
+}
+
 export async function startWeb(commandSpec, env, timeoutMs = DEFAULT_TIMEOUT_MS, cwd) {
   const port = await freePort()
   const startedAt = Date.now()
   const args = dshArgs(commandSpec, ['--profile', 'web', '--host', '127.0.0.1', '--port', String(port)])
-  const child = spawn(commandSpec.command, args, {
+  const invocation = resolveCommand(commandSpec.command, env)
+  const executable = invocation?.command ?? commandSpec.command
+  const commandArgs = [...(invocation?.prefix ?? []), ...args]
+  const child = spawn(executable, commandArgs, {
     cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-    shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(commandSpec.command),
+    shell: invocation?.shell ?? (process.platform === 'win32' && /\.(cmd|bat)$/i.test(commandSpec.command)),
   })
   let stdout = ''
   let stderr = ''
@@ -66,10 +77,10 @@ export async function startWeb(commandSpec, env, timeoutMs = DEFAULT_TIMEOUT_MS,
     if (await httpReady(port)) { ready = true; break }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 200))
   }
-  child.kill('SIGTERM')
+  stopProcessTree(child)
   const stopped = new Promise(resolvePromise => child.once('close', resolvePromise))
   await Promise.race([stopped, new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))])
-  if (child.exitCode === null) child.kill('SIGKILL')
+  if (child.exitCode === null && child.signalCode === null) stopProcessTree(child, true)
   return {
     ready, port, code: exitCode, durationMs: Date.now() - startedAt,
     stdout: redact(stdout), stderr: redact(stderr),

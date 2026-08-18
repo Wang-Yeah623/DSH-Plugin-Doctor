@@ -24,13 +24,18 @@ export function dshCommand(version, explicit) {
   return { command: 'dsh', prefix: [], label: 'dsh on PATH' }
 }
 
+export function parseDshVersion(output) {
+  const matches = [...String(output).matchAll(/\bv?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/g)]
+  const versionText = matches.at(-1)?.[0]
+  return versionText ? semver.clean(versionText) ?? undefined : undefined
+}
+
 export async function probeDsh(commandSpec, env, timeoutMs = 20_000) {
   if (!commandExists(commandSpec.command)) {
     return { check: check('runtime.dsh', 'error', `${commandSpec.command} is not available on PATH`), version: undefined }
   }
   const output = await run(commandSpec.command, [...commandSpec.prefix, '--version'], { env, timeoutMs })
-  const versionText = `${output.stdout}\n${output.stderr}`.match(/\bv?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\b/)?.[0]
-  const version = versionText ? semver.clean(versionText) ?? undefined : undefined
+  const version = parseDshVersion(`${output.stdout}\n${output.stderr}`)
   return {
     check: check('runtime.dsh', output.code === 0 ? 'pass' : 'error',
       output.code === 0 ? `DSH ${version ?? 'version unknown'} is executable` : `DSH version probe failed`, output),

@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { diffLines } from '../src/diff.js'
+import { parseDshVersion } from '../src/compatibility.js'
 import { collectPatchReferences, validateManifest } from '../src/manifest.js'
 import { sanitizedRuntimeEnv } from '../src/isolation.js'
 import { evaluatePolicy } from '../src/policy.js'
 import { badgeSvg, markdownReport } from '../src/report.js'
 import { permissionManifest, scanSource, excludedRoots } from '../src/scanner.js'
-import { backupDirectory, pathExists, restoreDirectory } from '../src/utils.js'
+import { acquireSource } from '../src/source.js'
+import { backupDirectory, commandExists, pathExists, restoreDirectory, splitCommand } from '../src/utils.js'
 
 const fixtures = resolve('test/fixtures')
 
@@ -44,6 +46,41 @@ test('isolated runtime strips inherited credentials', () => {
   assert.deepEqual(sanitizedRuntimeEnv({ PATH: '/bin', DEEPSEEK_API_KEY: 'secret', NODE_AUTH_TOKEN: 'secret', HTTP_PROXY: 'proxy' }), {
     PATH: '/bin', HTTP_PROXY: 'proxy',
   })
+})
+
+test('parses a quoted Windows DSH command without dropping path separators', () => {
+  const command = String.raw`"C:\Program Files\nodejs\node.exe" --import "F:\DSH Work\tsx\index.mjs" "F:\DSH Work\cli.ts"`
+  assert.deepEqual(splitCommand(command), [
+    String.raw`C:\Program Files\nodejs\node.exe`,
+    '--import',
+    String.raw`F:\DSH Work\tsx\index.mjs`,
+    String.raw`F:\DSH Work\cli.ts`,
+  ])
+})
+
+test('recognizes an explicit executable path as an available command', () => {
+  assert.equal(commandExists(process.execPath), true)
+})
+
+test('packs a local plugin path with spaces and Unicode before isolated installation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doctor source with spaces-'))
+  const plugin = join(root, '插件 fixture')
+  await cp(join(fixtures, 'safe-plugin'), plugin, { recursive: true })
+  let source
+  try {
+    source = await acquireSource(plugin, { timeoutMs: 30_000 })
+    assert.equal(source.root, plugin)
+    assert.notEqual(source.installSpec, plugin)
+    assert.match(source.installSpec, /\.tgz$/)
+    assert.equal(await pathExists(source.installSpec), true)
+  } finally {
+    await source?.cleanup()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('uses the DSH version rather than an earlier package-manager version', () => {
+  assert.equal(parseDshVersion('using pnpm 11.22.0\n0.1.0-rc.5\n'), '0.1.0-rc.5')
 })
 
 test('redacts secrets from configuration preview', () => {

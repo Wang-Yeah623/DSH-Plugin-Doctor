@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { x as extractTar } from 'tar'
@@ -21,6 +21,26 @@ async function findPackageRoot(extractDir) {
   throw new Error('Downloaded archive contains no package.json')
 }
 
+async function packSource(spec, work, options) {
+  const npmArgs = ['pack', spec, '--ignore-scripts', '--json']
+  if (options.registry) npmArgs.push('--registry', options.registry)
+  const packed = await run(options.npmCommand ?? 'npm', npmArgs, {
+    cwd: work,
+    env: options.env ?? process.env,
+    timeoutMs: options.timeoutMs ?? 60_000,
+  })
+  if (packed.code !== 0) throw new Error(`Unable to pack ${spec} without scripts: ${packed.stderr || packed.stdout}`)
+  let metadata
+  try {
+    const parsed = JSON.parse(packed.stdout)
+    metadata = Array.isArray(parsed) ? parsed[0] : parsed
+  } catch {
+    throw new Error(`npm pack returned invalid JSON for ${spec}`)
+  }
+  if (!metadata?.filename) throw new Error(`npm pack returned no archive filename for ${spec}`)
+  return { archive: resolve(work, metadata.filename), metadata }
+}
+
 export async function acquireSource(spec, options = {}) {
   const normalizedPath = spec.startsWith('file:') ? spec.slice(5) : spec
   const candidatePath = resolve(options.cwd ?? process.cwd(), normalizedPath)
@@ -29,46 +49,40 @@ export async function acquireSource(spec, options = {}) {
     if (!(await isDirectory(root))) throw new Error(`Plugin path is not a directory: ${root}`)
     const manifestPath = join(root, 'package.json')
     if (!(await pathExists(manifestPath))) throw new Error(`Plugin path has no package.json: ${root}`)
-    return {
-      kind: 'directory', root, installSpec: root, originalSpec: spec,
-      registry: options.registry,
-      manifest: await readJson(manifestPath), cleanup: async () => {},
+    const work = await mkdtemp(join(tmpdir(), 'dsh-doctor-source-'))
+    try {
+      const { archive, metadata } = await packSource(root, work, options)
+      return {
+        kind: 'directory', root, installSpec: archive, originalSpec: spec,
+        registry: options.registry,
+        integrity: metadata.integrity, shasum: metadata.shasum,
+        manifest: await readJson(manifestPath), cleanup: () => rm(work, { recursive: true, force: true }),
+      }
+    } catch (error) {
+      await rm(work, { recursive: true, force: true })
+      throw error
     }
   }
 
   const work = await mkdtemp(join(tmpdir(), 'dsh-doctor-source-'))
-  const registry = options.registry
-  const npmArgs = ['pack', spec, '--ignore-scripts', '--json']
-  if (registry) npmArgs.push('--registry', registry)
-  const packed = await run(options.npmCommand ?? 'npm', npmArgs, {
-    cwd: work,
-    env: options.env ?? process.env,
-    timeoutMs: options.timeoutMs ?? 60_000,
-  })
-  if (packed.code !== 0) {
-    await rm(work, { recursive: true, force: true })
-    throw new Error(`Unable to download ${spec} without scripts: ${packed.stderr || packed.stdout}`)
-  }
-  let metadata
   try {
-    const parsed = JSON.parse(packed.stdout)
-    metadata = Array.isArray(parsed) ? parsed[0] : parsed
-  } catch {
+    const { archive, metadata } = await packSource(spec, work, options)
+    const extractDir = join(work, 'unpacked')
+    await mkdir(extractDir, { recursive: true })
+    await extractTar({ file: archive, cwd: extractDir, gzip: true })
+    const root = await findPackageRoot(extractDir)
+    const manifest = await readJson(join(root, 'package.json'))
+    return {
+      kind: 'package', root, originalSpec: spec,
+      installSpec: isRegistrySpec(spec) ? `${manifest.name}@${manifest.version}` : spec,
+      registry: options.registry,
+      integrity: metadata.integrity, shasum: metadata.shasum,
+      manifest,
+      cleanup: () => rm(work, { recursive: true, force: true }),
+    }
+  } catch (error) {
     await rm(work, { recursive: true, force: true })
-    throw new Error(`npm pack returned invalid JSON for ${spec}`)
-  }
-  const archive = resolve(work, metadata.filename)
-  const extractDir = join(work, 'unpacked')
-  await extractTar({ file: archive, cwd: extractDir, gzip: true })
-  const root = await findPackageRoot(extractDir)
-  const manifest = await readJson(join(root, 'package.json'))
-  return {
-    kind: 'package', root, originalSpec: spec,
-    installSpec: isRegistrySpec(spec) ? `${manifest.name}@${manifest.version}` : spec,
-    registry: options.registry,
-    integrity: metadata.integrity, shasum: metadata.shasum,
-    manifest,
-    cleanup: () => rm(work, { recursive: true, force: true }),
+    throw error
   }
 }
 
