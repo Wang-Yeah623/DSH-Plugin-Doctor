@@ -4,7 +4,7 @@
   "description": "Compatibility, security, isolated-install and rollback doctor for DeepSeek Harness plugins",
   "type": "module",
   "bin": {
-    "dsh-plugin-doctor": "./src/cli.js"
+    "dsh-plugin-doctor": "src/cli.js"
   },
   "exports": {
     ".": "./src/index.js"
@@ -31,6 +31,15 @@
     "security"
   ],
   "license": "MIT",
+  "author": "Xrainsmile",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xrainsmile/DSH-Plugin-Doctor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Xrainsmile/DSH-Plugin-Doctor/issues"
+  },
+  "homepage": "https://github.com/Xrainsmile/DSH-Plugin-Doctor#readme",
   "dependencies": {
     "commander": "^14.0.1",
     "semver": "^7.7.2",
