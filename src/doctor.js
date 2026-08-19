@@ -11,10 +11,11 @@ import { splitCommand } from './utils.js'
 export async function doctorPlugin(spec, options = {}) {
   const config = await loadConfig(options.config)
   const registry = inferRegistry(spec, config)
+  const reportDir = options.reportDir ?? 'reports'
   const source = await acquireSource(spec, { registry, timeoutMs: options.timeoutMs })
   try {
     const manifestResult = await validateManifest(source.root, source.manifest)
-    const findings = await scanSource(source.root, source.manifest)
+    const findings = await scanSource(source.root, source.manifest, { reportDir })
     const references = collectPatchReferences(manifestResult.patchEntries)
     const permissions = permissionManifest(findings, references)
     const checks = [
@@ -66,7 +67,7 @@ export async function doctorPlugin(spec, options = {}) {
       policy,
       regressions,
     }
-    report.artifacts = await writeReports(report, options.reportDir ?? 'reports')
+    report.artifacts = await writeReports(report, reportDir)
     return report
   } finally {
     await source.cleanup()

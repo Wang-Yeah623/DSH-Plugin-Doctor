@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from 'node:fs/promises'
-import { extname, join, relative } from 'node:path'
+import { extname, join, relative, resolve } from 'node:path'
 import { MAX_SCAN_FILE_BYTES, SOURCE_EXTENSIONS } from './constants.js'
 import { redact } from './utils.js'
 
@@ -57,14 +57,35 @@ const RULES = [
   },
 ]
 
-async function walk(root, directory = root, output = []) {
+/**
+ * Resolve directories that must never be scanned for a given run.
+ *
+ * The report directory is the important case: doctor writes its own findings
+ * there, so a second run would rescan those artifacts and re-flag the risk
+ * keywords they quote. Matching is done on resolved absolute paths rather than
+ * directory names so a plugin's own `reports/` source folder is still scanned
+ * when reports are written elsewhere.
+ */
+export function excludedRoots(root, reportDir) {
+  const excluded = new Set()
+  if (typeof reportDir !== 'string' || reportDir.trim() === '') return excluded
+  const resolved = resolve(reportDir)
+  const scanRoot = resolve(root)
+  if (resolved === scanRoot) return excluded
+  if (resolved.startsWith(`${scanRoot}/`) || resolved.startsWith(`${scanRoot}\\`)) excluded.add(resolved)
+  return excluded
+}
+
+async function walk(root, directory = root, output = [], excluded = new Set()) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (IGNORED_DIRS.has(entry.name)) continue
     const path = join(directory, entry.name)
     const info = await lstat(path)
     if (info.isSymbolicLink()) continue
-    if (info.isDirectory()) await walk(root, path, output)
-    else if (info.isFile() && info.size <= MAX_SCAN_FILE_BYTES
+    if (info.isDirectory()) {
+      if (excluded.has(resolve(path))) continue
+      await walk(root, path, output, excluded)
+    } else if (info.isFile() && info.size <= MAX_SCAN_FILE_BYTES
       && (SOURCE_EXTENSIONS.has(extname(entry.name).toLowerCase()) || extname(entry.name) === '.node' || (info.mode & 0o111) !== 0)) output.push(path)
   }
   return output
@@ -88,7 +109,7 @@ function finding(rule, file, line, evidence, source = 'source') {
   }
 }
 
-export async function scanSource(root, manifest) {
+export async function scanSource(root, manifest, options = {}) {
   const findings = []
   const scripts = manifest.scripts ?? {}
   for (const rule of RULES.filter(item => item.manifestScripts)) {
@@ -97,7 +118,8 @@ export async function scanSource(root, manifest) {
     }
   }
 
-  for (const path of await walk(root)) {
+  const excluded = excludedRoots(root, options.reportDir)
+  for (const path of await walk(root, root, [], excluded)) {
     const relativePath = relative(root, path).replace(/\\/g, '/')
     if (extname(path) === '.node') {
       const rule = RULES.find(item => item.id === 'native-code')

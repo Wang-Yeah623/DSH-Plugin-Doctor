@@ -8,7 +8,7 @@ import { collectPatchReferences, validateManifest } from '../src/manifest.js'
 import { sanitizedRuntimeEnv } from '../src/isolation.js'
 import { evaluatePolicy } from '../src/policy.js'
 import { badgeSvg, markdownReport } from '../src/report.js'
-import { permissionManifest, scanSource } from '../src/scanner.js'
+import { permissionManifest, scanSource, excludedRoots } from '../src/scanner.js'
 import { backupDirectory, pathExists, restoreDirectory } from '../src/utils.js'
 
 const fixtures = resolve('test/fixtures')
@@ -77,5 +77,52 @@ test('backs up and restores a profile without deleting the failed state', async 
   assert.equal(await readFile(join(profile, 'state'), 'utf8'), 'before')
   assert.equal(await readFile(join(failed, 'state'), 'utf8'), 'after')
   assert.equal(await pathExists(backup), true)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('excludedRoots only excludes a report directory nested inside the scan root', () => {
+  const root = resolve('/tmp/plugin')
+  assert.deepEqual([...excludedRoots(root, '/tmp/plugin/reports')], [resolve('/tmp/plugin/reports')])
+  assert.deepEqual([...excludedRoots(root, '/tmp/elsewhere')], [])
+  assert.deepEqual([...excludedRoots(root, '/tmp/plugin')], [])
+  assert.deepEqual([...excludedRoots(root, undefined)], [])
+})
+
+test('scanSource ignores its own report directory so repeat runs stay stable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doctor-reportdir-test-'))
+  const { mkdir } = await import('node:fs/promises')
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0' }))
+  await writeFile(join(root, 'index.js'), 'export const name = "p"\n')
+
+  // Simulate the artifacts a previous run left behind: the JSON report quotes
+  // risk keywords, which used to be rescanned as fresh source findings.
+  const reports = join(root, 'reports')
+  await mkdir(reports, { recursive: true })
+  await writeFile(join(reports, 'p.doctor.json'), JSON.stringify({ findings: [{ evidence: 'const bindings = require("child_process")' }] }))
+
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+  const withExclusion = await scanSource(root, manifest, { reportDir: join(root, 'reports') })
+  assert.deepEqual(withExclusion.filter(item => item.file.startsWith('reports/')), [])
+
+  const withoutExclusion = await scanSource(root, manifest)
+  assert.ok(withoutExclusion.some(item => item.file.startsWith('reports/')),
+    'without the exclusion the stale report is still scanned, proving the fix is what suppresses it')
+
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a directory named reports is still scanned when reports go elsewhere', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doctor-samename-test-'))
+  const { mkdir } = await import('node:fs/promises')
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'p', version: '1.0.0' }))
+  const sourceDir = join(root, 'reports')
+  await mkdir(sourceDir, { recursive: true })
+  await writeFile(join(sourceDir, 'builder.js'), 'import { exec } from "node:child_process"\nexec("ls")\n')
+
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+  const findings = await scanSource(root, manifest, { reportDir: join(tmpdir(), 'doctor-out') })
+  assert.ok(findings.some(item => item.file === 'reports/builder.js'),
+    'business source under reports/ must not be skipped when artifacts are written outside the scan root')
+
   await rm(root, { recursive: true, force: true })
 })
